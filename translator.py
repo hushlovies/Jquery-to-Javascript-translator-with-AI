@@ -2,6 +2,7 @@
 """
 jQuery to JavaScript Translator with Integrated Semgrep Security Validation
 Main translator that imports and uses the Semgrep validator module
+translator.py
 """
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
@@ -17,9 +18,9 @@ import warnings
 try:
     from semgrep_validator import SemgrepValidator, SecurityLevel
     SEMGREP_AVAILABLE = True
-    print("✅ Semgrep validator imported successfully")
+    print(" Semgrep validator imported successfully")
 except ImportError as e:
-    print(f"⚠️ Could not import Semgrep validator: {e}")
+    print(f"Could not import Semgrep validator: {e}")
     print("   Make sure semgrep_validator.py is in the same directory")
     SEMGREP_AVAILABLE = False
     
@@ -47,17 +48,17 @@ class SecurejQueryToJSTranslator:
         self.security_level = security_level  # LOW, MEDIUM, HIGH
         self.use_semgrep = use_semgrep and SEMGREP_AVAILABLE
         
-        print(f"🤖 Loading jQuery to JS Translator")
+        print(f" Loading jQuery to JS Translator")
         print(f"   Security Level: {security_level}")
-        print(f"   Semgrep Integration: {'✅ Enabled' if self.use_semgrep else '❌ Disabled'}")
+        print(f"   Semgrep Integration: {'Enabled' if self.use_semgrep else '❌ Disabled'}")
         
         # Initialize Semgrep validator if available
         if self.use_semgrep:
             try:
                 self.semgrep_validator = SemgrepValidator()
-                print("🛡️ Semgrep security validator initialized")
+                print(" Semgrep security validator initialized")
             except Exception as e:
-                print(f"⚠️ Failed to initialize Semgrep: {e}")
+                print(f" Failed to initialize Semgrep: {e}")
                 print("   Continuing without Semgrep validation")
                 self.use_semgrep = False
         
@@ -70,60 +71,82 @@ class SecurejQueryToJSTranslator:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.model.to(self.device)
                 
-            print(f"✅ GPT-2 Medium loaded on {self.device}")
+            print(f" GPT-2 Medium loaded on {self.device}")
             
             # Load documentation and setup retrieval
             self.load_safe_documentation()
             self.prepare_retrieval_system()
             
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
+            print(f" Error loading model: {e}")
             raise
     
     def load_safe_documentation(self):
         """Load security-verified documentation examples"""
-        print("📚 Loading security-verified documentation...")
+        print(" Loading security-verified documentation...")
         
         # Safe documentation examples
         safe_docs = [
             {
-                "source": "MDN Web Docs - Safe DOM Manipulation",
+                "source": "MDN Web Docs - Safe DOM Manipulation (classList.add)",
+                "url": "https://developer.mozilla.org/en-US/docs/Web/API/Element/classList",
+                "jquery_url": "https://api.jquery.com/addClass/",
                 "jquery": "$('#element').addClass('active');",
                 "javascript": "document.getElementById('element').classList.add('active');",
                 "explanation": "Safe class manipulation using classList"
             },
             {
-                "source": "MDN Web Docs - Safe Event Handling",
+                "source": "MDN Web Docs - Safe Event Handling (addEventListener)",
+                "url": "https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener",
+                "jquery_url": "https://api.jquery.com/click/",
                 "jquery": "$('#button').click(function() { console.log('clicked'); });",
                 "javascript": "document.getElementById('button').addEventListener('click', function() { console.log('clicked'); });",
                 "explanation": "Safe event handling with addEventListener"
             },
             {
-                "source": "MDN Web Docs - Safe Text Content",
+                "source": "MDN Web Docs - Safe Text Content (textContent, not innerHTML)",
+                "urls": [
+                    "https://developer.mozilla.org/en-US/docs/Web/API/Node/textContent",
+                    "https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML"
+                ],
+                "security_urls": [
+                    "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"
+                ],
+                "jquery_url": "https://api.jquery.com/text/",
                 "jquery": "$('#element').text('Safe content');",
                 "javascript": "document.getElementById('element').textContent = 'Safe content';",
-                "explanation": "Safe text content using textContent (not innerHTML)"
+                "explanation": "Prefer textContent to avoid HTML execution and XSS risks"
             },
             {
-                "source": "MDN Web Docs - Safe Styling",
+                "source": "MDN Web Docs - Safe Styling (CSSOM inline style)",
+                "url": "https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/style",
+                "jquery_url": "https://api.jquery.com/css/",
                 "jquery": "$('#element').css('color', 'red');",
                 "javascript": "document.getElementById('element').style.color = 'red';",
-                "explanation": "Safe direct style manipulation"
+                "explanation": "Direct style manipulation via CSSStyleDeclaration"
             },
             {
-                "source": "MDN Web Docs - Safe Element Selection",
+                "source": "MDN Web Docs - Safe Element Selection (querySelectorAll + forEach)",
+                "urls": [
+                    "https://developer.mozilla.org/en-US/docs/Web/API/Document/querySelectorAll",
+                    "https://developer.mozilla.org/en-US/docs/Web/API/NodeList/forEach"
+                ],
+                "jquery_url_hide": "https://api.jquery.com/hide/",
+                "jquery_url_show": "https://api.jquery.com/show/",
                 "jquery": "$('.items').hide();",
                 "javascript": "document.querySelectorAll('.items').forEach(el => el.style.display = 'none');",
-                "explanation": "Safe element selection and manipulation"
+                "explanation": "Select elements with CSS selectors and iterate safely"
             },
             {
-                "source": "MDN Web Docs - Safe Document Ready",
+                "source": "MDN Web Docs - Safe Document Ready (DOMContentLoaded)",
+                "url": "https://developer.mozilla.org/en-US/docs/Web/API/Document/DOMContentLoaded_event",
+                "jquery_url": "https://api.jquery.com/ready/",
                 "jquery": "$(document).ready(function() { init(); });",
                 "javascript": "document.addEventListener('DOMContentLoaded', function() { init(); });",
-                "explanation": "Safe document ready event handling"
+                "explanation": "Run code after DOM is parsed (native equivalent of jQuery ready)"
             }
         ]
-        
+
         # Validate documentation examples with Semgrep if available
         validated_docs = []
         for doc in safe_docs:
@@ -137,7 +160,7 @@ class SecurejQueryToJSTranslator:
                 validated_docs.append(doc)  # Add all if no Semgrep validation
         
         self.documentation = validated_docs
-        print(f"✅ Loaded {len(self.documentation)} verified examples")
+        print(f" Loaded {len(self.documentation)} verified examples")
     
     def prepare_retrieval_system(self):
         """Prepare RAG retrieval system"""
@@ -149,9 +172,9 @@ class SecurejQueryToJSTranslator:
         if self.docs_text:
             self.vectorizer = TfidfVectorizer()
             self.doc_vectors = self.vectorizer.fit_transform(self.docs_text)
-            print("✅ Retrieval system prepared")
+            print(" Retrieval system prepared")
         else:
-            print("⚠️ No documentation available for retrieval system")
+            print("No documentation available for retrieval system")
     
     def retrieve_relevant_docs(self, query, top_k=3):
         """Retrieve relevant documentation with security filtering"""
@@ -281,18 +304,18 @@ class SecurejQueryToJSTranslator:
         if not jquery_code:
             return {
                 "original": jquery_code,
-                "translated": "// No code provided",
+                "translated": "// Not in the pattern",
                 "security": {"level": SecurityLevel.SAFE, "safe_to_execute": True, "issues": []},
                 "method": "none"
             }
         
-        print(f"\n🔄 Translating: {jquery_code}")
+        print(f"\n Translating: {jquery_code}")
         
         # Try secure pattern-based translation
         pattern_result, security_info = self.secure_pattern_translation(jquery_code)
         
         if pattern_result:
-            print(f"✅ Secure translation successful")
+            print(f" Secure translation successful")
             print(f"   Result: {pattern_result}")
             
             if self.use_semgrep:
@@ -307,7 +330,7 @@ class SecurejQueryToJSTranslator:
             }
         
         # If no secure pattern available, block the translation
-        print(f"❌ No secure translation pattern available")
+        print(f" No secure translation pattern available")
         return {
             "original": jquery_code,
             "translated": f"// BLOCKED: No secure translation available for: {jquery_code}",
@@ -324,7 +347,7 @@ class SecurejQueryToJSTranslator:
         """Batch translation with security validation"""
         results = []
         
-        print(f"\n📦 Batch Translation ({len(jquery_codes)} items)")
+        print(f"\n Batch Translation ({len(jquery_codes)} items)")
         print("=" * 60)
         
         for i, code in enumerate(jquery_codes, 1):
@@ -336,7 +359,7 @@ class SecurejQueryToJSTranslator:
     
     def security_report(self, results: List[Dict]):
         """Generate security report from translation results"""
-        print(f"\n📊 SECURITY REPORT")
+        print(f"\n SECURITY REPORT")
         print("=" * 40)
         
         # Count by security level
@@ -345,15 +368,15 @@ class SecurejQueryToJSTranslator:
         dangerous_count = sum(1 for r in results if r['security']['level'] == SecurityLevel.DANGEROUS)
         blocked_count = sum(1 for r in results if r['security']['level'] == SecurityLevel.BLOCKED)
         
-        print(f"✅ Safe: {safe_count}")
-        print(f"⚠️ Warnings: {warning_count}")
-        print(f"❌ Dangerous: {dangerous_count}")
-        print(f"⛔ Blocked: {blocked_count}")
+        print(f" Safe: {safe_count}")
+        print(f" Warnings: {warning_count}")
+        print(f" Dangerous: {dangerous_count}")
+        print(f" Blocked: {blocked_count}")
         
         # Security score average
         scores = [r['security'].get('score', 0) for r in results]
         avg_score = sum(scores) / len(scores) if scores else 0
-        print(f"📈 Average Security Score: {avg_score:.1f}/100")
+        print(f" Average Security Score: {avg_score:.1f}/100")
 
 def main():
     """Test the secure translator"""
@@ -375,7 +398,7 @@ def main():
         "$('#element').attr('onclick', 'alert(1)');",  # Event injection
     ]
     
-    print(f"\n🧪 Testing Secure jQuery to JavaScript Translator")
+    print(f"\n Testing Secure jQuery to JavaScript Translator")
     print("=" * 60)
     
     # Translate all test cases
@@ -385,7 +408,7 @@ def main():
     translator.security_report(results)
     
     # Detailed results
-    print(f"\n📝 DETAILED RESULTS")
+    print(f"\n DETAILED RESULTS")
     print("=" * 40)
     
     for i, result in enumerate(results, 1):

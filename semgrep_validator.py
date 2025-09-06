@@ -1,314 +1,280 @@
 #!/usr/bin/env python3
+    """
+    The script defines a Semgrep-based security validator for JavaScript code, with the ability to
+    analyze code for potential security issues using predefined rulesets or fallback pattern matching.
+    """
 """
-Enhanced translator.py with detailed Semgrep security output
-Shows exactly why code is blocked with full explanations
+Semgrep Security Validator for jQuery to JavaScript Translation
+semgrep_validator.py
 """
 
-# Add this enhanced method to your SecurejQueryToJSTranslator class
+import subprocess
+import json
+import tempfile
+import os
+import re
+from enum import Enum
+from typing import Dict, List, Any
 
-def display_detailed_security_info(self, security_result: dict, code: str):
-    """Display detailed security information from Semgrep"""
-    
-    print(f"\n🛡️ SECURITY ANALYSIS DETAILS")
-    print("=" * 50)
-    print(f"Code: {code}")
-    print(f"Overall Security Level: {security_result['level'].value}")
-    print(f"Security Score: {security_result['score']}/100")
-    print(f"Safe to Execute: {'Yes' if security_result['safe_to_execute'] else 'No'}")
-    print(f"Analysis Tool: {security_result.get('tool', 'unknown')}")
-    
-    # Show detailed issues
-    issues = security_result.get('issues', [])
-    if issues:
-        print(f"\n📋 SECURITY ISSUES FOUND ({len(issues)}):")
-        print("-" * 40)
-        
-        for i, issue in enumerate(issues, 1):
-            print(f"\n{i}. ISSUE: {issue.get('type', 'Unknown')}")
-            print(f"   Rule ID: {issue.get('rule_id', 'N/A')}")
-            print(f"   Severity: {issue.get('severity', 'N/A')}")
-            print(f"   Message: {issue.get('message', 'No description available')}")
-            
-            if issue.get('line'):
-                print(f"   Location: Line {issue['line']}, Column {issue.get('column', 0)}")
-            
-            # Show code context if available
-            if issue.get('code'):
-                print(f"   Code Context: {issue['code']}")
-    else:
-        print("\n✅ No security issues detected")
-    
-    # Show recommendations
-    recommendations = security_result.get('recommendations', [])
-    if recommendations:
-        print(f"\n💡 SECURITY RECOMMENDATIONS:")
-        print("-" * 30)
-        for i, rec in enumerate(recommendations, 1):
-            print(f"{i}. {rec}")
+class SecurityLevel(Enum):
+    """Security levels for code validation"""
+    SAFE = "SAFE"
+    WARNING = "WARNING" 
+    DANGEROUS = "DANGEROUS"
+    BLOCKED = "BLOCKED"
 
-def enhanced_translate(self, jquery_code: str) -> dict:
-    """Enhanced translation with detailed security reporting"""
-    jquery_code = jquery_code.strip()
+class SemgrepValidator:
+    """Semgrep-based security validator for JavaScript code"""
     
-    if not jquery_code:
-        return {
-            "original": jquery_code,
-            "translated": "// No code provided",
-            "security": {"level": SecurityLevel.SAFE, "safe_to_execute": True, "issues": []},
-            "method": "none"
-        }
-    
-    print(f"\n🔄 Translating: {jquery_code}")
-    
-    # Try secure pattern-based translation
-    pattern_result, security_info = self.secure_pattern_translation(jquery_code)
-    
-    if pattern_result:
-        print(f"✅ Pattern-based translation successful")
-        print(f"   Result: {pattern_result}")
+    def __init__(self):
+        """Initialize Semgrep validator"""
+        self.semgrep_available = self._check_semgrep_availability()
+        self.security_rulesets = [
+            "p/javascript",
+            "p/security-audit", 
+            "p/owasp-top-ten"
+        ]
         
-        # Show detailed security analysis
-        if self.use_semgrep and security_info:
-            self.display_detailed_security_info(security_info, pattern_result)
-        
-        return {
-            "original": jquery_code,
-            "translated": pattern_result,
-            "security": security_info,
-            "method": "secure_pattern"
-        }
-    
-    # If no pattern found, run security analysis on original jQuery code
-    # to show WHY it's blocked
-    print(f"❌ No secure translation pattern available")
-    
-    # Analyze the jQuery code to understand why it's blocked
-    if self.use_semgrep:
-        # Convert jQuery to basic JS first to analyze security
-        basic_js = self.jquery_to_basic_js(jquery_code)
-        security_analysis = self.semgrep_validator.validate_code_security(basic_js)
-        
-        print(f"\n🔍 SECURITY ANALYSIS OF ORIGINAL CODE:")
-        self.display_detailed_security_info(security_analysis, basic_js)
-    
-    return {
-        "original": jquery_code,
-        "translated": f"// BLOCKED: No secure translation available for: {jquery_code}",
-        "security": {
-            "level": SecurityLevel.BLOCKED,
-            "safe_to_execute": False,
-            "issues": [{"type": "NO_SECURE_PATTERN", "description": "No secure translation pattern available - see analysis above"}],
-            "tool": "translator"
-        },
-        "method": "blocked"
-    }
-
-def jquery_to_basic_js(self, jquery_code: str) -> str:
-    """Convert jQuery to basic JavaScript for security analysis (unsafe conversion)"""
-    # This is just for security analysis - NOT for production use
-    conversions = {
-        r"\$\(['\"]#(.+?)['\"]\)\.html\((.+?)\)": r"document.getElementById('\1').innerHTML = \2",
-        r"\$\(['\"]#(.+?)['\"]\)\.text\((.+?)\)": r"document.getElementById('\1').textContent = \2",
-        r"\$\(['\"]#(.+?)['\"]\)\.click\((.+?)\)": r"document.getElementById('\1').addEventlistener('click', \2)",
-        r"\$\(['\"]\.(.+?)['\"]\)\.html\((.+?)\)": r"document.querySelectorAll('.\1').forEach(el => el.innerHTML = \2)",
-    }
-    
-    result = jquery_code
-    for pattern, replacement in conversions.items():
-        result = re.sub(pattern, replacement, result)
-    
-    return result
-
-# Enhanced security validator that provides more details
-def enhanced_validate_code_security(self, code: str) -> dict:
-    """Enhanced version that captures more details from Semgrep"""
-    
-    if not code or not code.strip():
-        return {
-            "level": SecurityLevel.SAFE,
-            "issues": [],
-            "score": 100,
-            "safe_to_execute": True,
-            "tool": "semgrep"
-        }
-    
-    # Create temporary file
-    js_file = self.create_temp_js_file(code)
-    
-    try:
-        # Run Semgrep analysis with verbose output
-        semgrep_result = self.run_enhanced_semgrep_analysis(js_file)
-        
-        # Process results with enhanced detail extraction
-        issues = []
-        security_level = SecurityLevel.SAFE
-        
-        for finding in semgrep_result.get("results", []):
-            extra = finding.get("extra", {})
-            severity = extra.get("severity", "INFO")
-            
-            # Extract more detailed information
-            issue = {
-                "type": "SEMGREP_FINDING",
-                "rule_id": finding.get("check_id", "unknown"),
-                "message": extra.get("message", "Security issue detected"),
-                "severity": severity,
-                "line": finding.get("start", {}).get("line", 0),
-                "column": finding.get("start", {}).get("col", 0),
-                "end_line": finding.get("end", {}).get("line", 0),
-                "code": finding.get("extra", {}).get("lines", ""),
-                "fix": extra.get("fix", ""),
-                "metadata": extra.get("metadata", {}),
-                "confidence": extra.get("confidence", "MEDIUM"),
-                "category": extra.get("category", "security"),
-                "cwe": extra.get("metadata", {}).get("cwe", []),
-                "owasp": extra.get("metadata", {}).get("owasp", []),
-                "references": extra.get("metadata", {}).get("references", [])
+        # Fallback patterns if Semgrep not available
+        self.dangerous_patterns = {
+            'eval_usage': {
+                'pattern': r'\beval\s*\(',
+                'message': 'Use of eval() is dangerous - allows code injection',
+                'severity': 'ERROR',
+                'cwe': ['CWE-95']
+            },
+            'function_constructor': {
+                'pattern': r'\bFunction\s*\(',
+                'message': 'Function constructor can execute arbitrary code',
+                'severity': 'ERROR', 
+                'cwe': ['CWE-95']
+            },
+            'innerHTML_injection': {
+                'pattern': r'\.innerHTML\s*=.*[\+\$]',
+                'message': 'innerHTML with concatenation may cause XSS',
+                'severity': 'WARNING',
+                'cwe': ['CWE-79']
+            },
+            'document_write': {
+                'pattern': r'\bdocument\.write\s*\(',
+                'message': 'document.write is deprecated and unsafe',
+                'severity': 'WARNING',
+                'cwe': ['CWE-79']
+            },
+            'onclick_attribute': {
+                'pattern': r'\.onclick\s*=',
+                'message': 'Use addEventListener instead of onclick attribute',
+                'severity': 'INFO',
+                'cwe': []
             }
-            
-            issues.append(issue)
-            
-            # Update security level based on severity
-            if severity == "ERROR":
-                security_level = SecurityLevel.DANGEROUS
-            elif severity == "WARNING" and security_level == SecurityLevel.SAFE:
-                security_level = SecurityLevel.WARNING
+        }
         
-        # Calculate security score
+        print(f"🛡️ Semgrep Validator initialized")
+        print(f"   Semgrep Available: {'✅' if self.semgrep_available else '❌'}")
+        if not self.semgrep_available:
+            print("   Using fallback pattern matching")
+    
+    def _check_semgrep_availability(self) -> bool:
+        """Check if Semgrep is available on the system"""
+        try:
+            result = subprocess.run(['semgrep', '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    
+    def create_temp_js_file(self, code: str) -> str:
+        """Create temporary JavaScript file for analysis"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
+            f.write(code)
+            return f.name
+    
+    def run_semgrep_analysis(self, js_file_path: str) -> Dict[str, Any]:
+        """Run Semgrep security analysis"""
+        if not self.semgrep_available:
+            return {"results": []}
+        
+        try:
+            cmd = [
+                'semgrep',
+                '--config', 'p/javascript',
+                '--config', 'p/security-audit',
+                '--json',
+                '--no-git-ignore',
+                '--disable-version-check',
+                js_file_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+            else:
+                print(f"Semgrep error: {result.stderr}")
+                return {"results": []}
+                
+        except subprocess.TimeoutExpired:
+            print("Semgrep analysis timed out")
+            return {"results": []}
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse Semgrep output: {e}")
+            return {"results": []}
+        except Exception as e:
+            print(f"Semgrep analysis failed: {e}")
+            return {"results": []}
+    
+    def fallback_pattern_analysis(self, code: str) -> List[Dict[str, Any]]:
+        """Fallback pattern-based security analysis"""
+        issues = []
+        
+        for rule_name, rule_info in self.dangerous_patterns.items():
+            pattern = rule_info['pattern']
+            matches = re.finditer(pattern, code, re.IGNORECASE | re.MULTILINE)
+            
+            for match in matches:
+                line_num = code[:match.start()].count('\n') + 1
+                issues.append({
+                    "type": "PATTERN_MATCH",
+                    "rule_id": rule_name,
+                    "message": rule_info['message'],
+                    "severity": rule_info['severity'],
+                    "line": line_num,
+                    "column": match.start() - code.rfind('\n', 0, match.start()),
+                    "code": match.group(0),
+                    "cwe": rule_info.get('cwe', []),
+                    "confidence": "MEDIUM"
+                })
+        
+        return issues
+    
+    def _calculate_security_score(self, issues: List[Dict]) -> int:
+        """Calculate security score based on issues"""
+        if not issues:
+            return 100
+        
+        score = 100
+        for issue in issues:
+            severity = issue.get('severity', 'INFO')
+            if severity == 'ERROR':
+                score -= 30
+            elif severity == 'WARNING':
+                score -= 15
+            elif severity == 'INFO':
+                score -= 5
+        
+        return max(0, score)
+    
+    def _determine_security_level(self, issues: List[Dict]) -> SecurityLevel:
+        """Determine overall security level"""
+        if not issues:
+            return SecurityLevel.SAFE
+        
+        has_error = any(issue.get('severity') == 'ERROR' for issue in issues)
+        has_warning = any(issue.get('severity') == 'WARNING' for issue in issues)
+        
+        if has_error:
+            return SecurityLevel.DANGEROUS
+        elif has_warning:
+            return SecurityLevel.WARNING
+        else:
+            return SecurityLevel.SAFE
+    
+    def validate_code_security(self, code: str) -> Dict[str, Any]:
+        """Main security validation method"""
+        if not code or not code.strip():
+            return {
+                "level": SecurityLevel.SAFE,
+                "issues": [],
+                "score": 100,
+                "safe_to_execute": True,
+                "tool": "validator"
+            }
+        
+        if self.semgrep_available:
+            # Use Semgrep analysis
+            js_file = self.create_temp_js_file(code)
+            
+            try:
+                semgrep_result = self.run_semgrep_analysis(js_file)
+                issues = []
+                
+                for finding in semgrep_result.get("results", []):
+                    extra = finding.get("extra", {})
+                    issues.append({
+                        "type": "SEMGREP_FINDING",
+                        "rule_id": finding.get("check_id", "unknown"),
+                        "message": extra.get("message", "Security issue detected"),
+                        "severity": extra.get("severity", "INFO"),
+                        "line": finding.get("start", {}).get("line", 0),
+                        "column": finding.get("start", {}).get("col", 0),
+                        "code": extra.get("lines", ""),
+                        "confidence": extra.get("confidence", "MEDIUM")
+                    })
+                
+            finally:
+                if os.path.exists(js_file):
+                    os.unlink(js_file)
+        else:
+            # Use fallback pattern analysis
+            issues = self.fallback_pattern_analysis(code)
+        
+        # Calculate results
+        security_level = self._determine_security_level(issues)
         score = self._calculate_security_score(issues)
-        
-        # Determine if safe to execute
-        safe_to_execute = (security_level in [SecurityLevel.SAFE, SecurityLevel.WARNING] and 
-                         score >= 70)
+        safe_to_execute = security_level in [SecurityLevel.SAFE, SecurityLevel.WARNING] and score >= 70
         
         return {
             "level": security_level,
             "issues": issues,
-            "score": score, 
+            "score": score,
             "safe_to_execute": safe_to_execute,
-            "tool": "semgrep",
-            "recommendations": self._generate_enhanced_recommendations(issues)
+            "tool": "semgrep" if self.semgrep_available else "fallback"
         }
+    
+    def get_security_summary(self, code: str) -> str:
+        """Get a brief security summary"""
+        result = self.validate_code_security(code)
+        level = result['level']
+        score = result['score']
+        issue_count = len(result['issues'])
         
-    finally:
-        # Clean up temporary file
-        if os.path.exists(js_file):
-            os.unlink(js_file)
-
-def run_enhanced_semgrep_analysis(self, js_file_path: str) -> dict:
-    """Enhanced Semgrep analysis with more verbose output"""
-    try:
-        # Create custom rules file
-        custom_rules_file = self.create_custom_rules_file()
-        
-        # Prepare enhanced Semgrep command
-        cmd = [
-            'semgrep',
-            '--config', custom_rules_file,
-            '--json',
-            '--verbose',  # More detailed output
-            '--no-git-ignore',
-            '--disable-version-check',
-            '--max-lines-per-finding', '10'  # Show more context
-        ]
-        
-        # Add official rulesets
-        for ruleset in self.security_rulesets[:3]:  # More rulesets for better coverage
-            cmd.extend(['--config', ruleset])
-        
-        cmd.append(js_file_path)
-        
-        # Run Semgrep with extended timeout
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
-        
-        # Clean up
-        os.unlink(custom_rules_file)
-        
-        if result.returncode == 0:
-            return json.loads(result.stdout)
+        if level == SecurityLevel.SAFE:
+            return f"✅ SAFE ({score}/100)"
+        elif level == SecurityLevel.WARNING:
+            return f"⚠️ WARNING ({score}/100, {issue_count} issues)"
+        elif level == SecurityLevel.DANGEROUS:
+            return f"❌ DANGEROUS ({score}/100, {issue_count} issues)"
         else:
-            print(f"Semgrep returned code {result.returncode}")
-            if result.stderr:
-                print(f"Semgrep stderr: {result.stderr}")
-            return {"results": []}
-            
-    except subprocess.TimeoutExpired:
-        print("Semgrep analysis timed out")
-        return {"results": []}
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse Semgrep output: {e}")
-        return {"results": []}
-    except Exception as e:
-        print(f"Semgrep analysis failed: {e}")
-        return {"results": []}
+            return f"⛔ BLOCKED"
 
-def _generate_enhanced_recommendations(self, issues: list[dict]) -> list[str]:
-    """Generate detailed security recommendations with explanations"""
-    recommendations = []
-    
-    if not issues:
-        recommendations.append("✅ No security issues detected by Semgrep")
-        return recommendations
-    
-    # Group issues by category
-    error_count = sum(1 for issue in issues if issue.get("severity") == "ERROR")
-    warning_count = sum(1 for issue in issues if issue.get("severity") == "WARNING")
-    
-    if error_count > 0:
-        recommendations.append(f"❌ CRITICAL: {error_count} high-risk security issue(s) detected")
-        recommendations.append("   Action: Block code execution immediately")
-    
-    if warning_count > 0:
-        recommendations.append(f"⚠️ WARNING: {warning_count} potential security issue(s) found")
-        recommendations.append("   Action: Review and validate before deployment")
-    
-    # Analyze specific vulnerability types
-    rule_ids = [issue.get("rule_id", "") for issue in issues]
-    cwe_ids = []
-    for issue in issues:
-        cwe_ids.extend(issue.get("cwe", []))
-    
-    # Provide specific remediation advice
-    if any("innerHTML" in rule_id or "xss" in rule_id.lower() for rule_id in rule_ids):
-        recommendations.append("🔧 XSS Prevention:")
-        recommendations.append("   - Use textContent instead of innerHTML")
-        recommendations.append("   - Sanitize all user input with DOMPurify")
-        recommendations.append("   - Implement Content Security Policy (CSP)")
-    
-    if any("eval" in rule_id or "function" in rule_id.lower() for rule_id in rule_ids):
-        recommendations.append("🔧 Code Injection Prevention:")
-        recommendations.append("   - Never use eval() or Function() constructor")
-        recommendations.append("   - Use JSON.parse() for data parsing")
-        recommendations.append("   - Implement strict input validation")
-    
-    # Add CWE-specific recommendations
-    if "CWE-79" in cwe_ids:
-        recommendations.append("📚 Reference: CWE-79 Cross-site Scripting (XSS)")
-    if "CWE-95" in cwe_ids:
-        recommendations.append("📚 Reference: CWE-95 Code Injection")
-    
-    return recommendations
-
-# Test function to demonstrate enhanced output
-def test_enhanced_security():
-    """Test enhanced security reporting"""
-    from semgrep_validator import SemgrepValidator
-    
+def test_validator():
+    """Test the validator with sample code"""
     validator = SemgrepValidator()
     
-    # Replace the method with enhanced version
-    validator.validate_code_security = enhanced_validate_code_security.__get__(validator, SemgrepValidator)
-    validator.run_semgrep_analysis = run_enhanced_semgrep_analysis.__get__(validator, SemgrepValidator)
-    validator._generate_recommendations = _generate_enhanced_recommendations.__get__(validator, SemgrepValidator)
+    test_cases = [
+        # Safe code
+        "document.getElementById('test').textContent = 'Hello';",
+        
+        # Dangerous code
+        "eval('alert(1)');",
+        "document.getElementById('content').innerHTML = userInput;",
+        "Function('alert(1)')();"
+    ]
     
-    # Test with problematic code
-    dangerous_code = "document.getElementById('content').innerHTML = userInput + '<script>alert(1)</script>';"
+    print("\n🧪 Testing Semgrep Validator")
+    print("=" * 40)
     
-    print("Testing enhanced security analysis:")
-    result = validator.validate_code_security(dangerous_code)
-    
-    # Display results
-    display_detailed_security_info(None, result, dangerous_code)
+    for i, code in enumerate(test_cases, 1):
+        print(f"\n{i}. Testing: {code}")
+        result = validator.validate_code_security(code)
+        print(f"   Level: {result['level'].value}")
+        print(f"   Score: {result['score']}/100")
+        print(f"   Safe: {'Yes' if result['safe_to_execute'] else 'No'}")
+        
+        if result['issues']:
+            print(f"   Issues: {len(result['issues'])}")
+            for issue in result['issues'][:2]:  # Show first 2
+                print(f"     - {issue.get('message', 'Unknown issue')}")
 
 if __name__ == "__main__":
-    test_enhanced_security()
+    test_validator()
