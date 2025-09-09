@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-    """
-    The script defines a Semgrep-based security validator for JavaScript code, with the ability to
-    analyze code for potential security issues using predefined rulesets or fallback pattern matching.
-    """
-"""
-Semgrep Security Validator for jQuery to JavaScript Translation
-semgrep_validator.py
-"""
 
 import subprocess
 import json
@@ -69,7 +61,7 @@ class SemgrepValidator:
             }
         }
         
-        print(f"🛡️ Semgrep Validator initialized")
+        print(f" Semgrep Validator initialized")
         print(f"   Semgrep Available: {'✅' if self.semgrep_available else '❌'}")
         if not self.semgrep_available:
             print("   Using fallback pattern matching")

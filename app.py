@@ -10,7 +10,6 @@ import time
 # Configuration de la page
 st.set_page_config(
     page_title="jQuery → JS Translator | Étude Comparative",
-    page_icon="🔄",
     layout="wide"
 )
 
@@ -105,13 +104,13 @@ def show_security_status(security_result):
         st.markdown(f'<div class="security-safe"> SÉCURISÉ - Score: {score}/100</div>', 
                    unsafe_allow_html=True)
     elif level == SecurityLevel.WARNING:
-        st.markdown(f'<div class="security-warning">⚠️ ATTENTION - Score: {score}/100</div>', 
+        st.markdown(f'<div class="security-warning"> ATTENTION - Score: {score}/100</div>', 
                    unsafe_allow_html=True)
     elif level == SecurityLevel.DANGEROUS:
-        st.markdown(f'<div class="security-danger">⛔ DANGEREUX - Score: {score}/100</div>', 
+        st.markdown(f'<div class="security-danger">DANGEREUX - Score: {score}/100</div>', 
                    unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="security-blocked">🚫 BLOQUÉ</div>', 
+        st.markdown(f'<div class="security-blocked">BLOQUÉ</div>', 
                    unsafe_allow_html=True)
 
 def show_comparison_result(vanilla_result, rag_result, jquery_code):
@@ -126,7 +125,7 @@ def show_comparison_result(vanilla_result, rag_result, jquery_code):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown('<div class="comparison-header vanilla-header">🤖 LLM Pur (GPT-2 Medium)</div>', 
+        st.markdown('<div class="comparison-header vanilla-header">LLM Pur (GPT-2 Medium)</div>', 
                    unsafe_allow_html=True)
         
         # Affichage du résultat vanilla
@@ -144,7 +143,7 @@ def show_comparison_result(vanilla_result, rag_result, jquery_code):
         with col_v1:
             st.metric("Qualité", f"{vanilla_analysis['quality_score']}/5")
         with col_v2:
-            status = "❌ Halluciné" if vanilla_analysis['is_hallucination'] else "✅ Correct"
+            status = "Halluciné" if vanilla_analysis['is_hallucination'] else "✅ Correct"
             st.metric("Status", status)
     
     with col2:
@@ -155,13 +154,13 @@ def show_comparison_result(vanilla_result, rag_result, jquery_code):
         rag_translation = rag_result.get('translated', 'Erreur')
         if 'BLOCKED' in rag_translation:
             st.markdown(f'<div class="security-blocked">'
-                       f'<strong>🚫 TRADUCTION BLOQUÉE</strong><br>'
+                       f'<strong>TRADUCTION BLOQUÉE</strong><br>'
                        f'<code>{rag_translation}</code><br>'
                        f'<small>Sécurité prioritaire</small>'
                        f'</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="good-translation">'
-                       f'<strong>✅ TRADUCTION SÉCURISÉE</strong><br>'
+                       f'<strong>TRADUCTION SÉCURISÉE</strong><br>'
                        f'<code>{rag_translation}</code>'
                        f'</div>', unsafe_allow_html=True)
         
@@ -180,12 +179,12 @@ def show_comparison_result(vanilla_result, rag_result, jquery_code):
 
 # Interface principale
 def main():
-    st.title("🔄 Étude Comparative: LLM vs RAG+Patterns")
+    st.title("Étude Comparative: LLM vs RAG+Patterns")
     st.markdown("**Démonstration des Hallucinations IA** | Projet RNCP - IA Générative & Web")
 
     # Vérification des systèmes
     if not (RAG_SYSTEM_OK or VANILLA_SYSTEM_OK):
-        st.error("❌ Aucun système disponible. Vérifiez vos imports.")
+        st.error("Aucun système disponible. Vérifiez vos imports.")
         st.stop()
 
     # Chargement des traducteurs
@@ -196,7 +195,7 @@ def main():
         st.session_state.selected_example = ""
 
     # --- Section des exemples d'hallucinations ---
-    st.subheader("📝 Exemples de Hallucinations")
+    st.subheader("Exemples de Hallucinations")
 
     hallucination_examples = {
         "Click simple": "$('#btn').click(function() { alert('test'); });",
@@ -212,7 +211,7 @@ def main():
             if st.button(name, key=f"ex_{name}", use_container_width=True):
                 st.session_state.selected_example = code
 
-    st.subheader("💻 Code jQuery à tester")
+    st.subheader("Code jQuery à tester")
     jquery_code = st.text_area(
         "Entrez le code jQuery:",
         value=st.session_state.selected_example,
@@ -224,21 +223,21 @@ def main():
     if jquery_code != st.session_state.selected_example:
         st.session_state.selected_example = jquery_code
 
-    if st.button("🚀 Comparer les Traductions", type="primary", use_container_width=True):
+    if st.button("Comparer les Traductions", type="primary", use_container_width=True):
         if jquery_code.strip():
-            st.subheader("📊 Résultats Comparatifs")
+            st.subheader("Résultats Comparatifs")
 
             vanilla_result, rag_result = {}, {}
             vanilla_time, rag_time = 0, 0
             
             if 'vanilla' in translators:
-                with st.spinner("🤖 Traduction LLM Vanilla..."):
+                with st.spinner(" Traduction LLM Vanilla..."):
                     vanilla_start = time.time()
                     vanilla_result = translators['vanilla'].translate(jquery_code.strip())
                     vanilla_time = time.time() - vanilla_start
 
             if 'rag' in translators:
-                with st.spinner("📚 Traduction RAG+Patterns..."):
+                with st.spinner("Traduction RAG+Patterns..."):
                     rag_start = time.time()
                     rag_result = translators['rag'].translate(jquery_code.strip())
                     rag_time = time.time() - rag_start

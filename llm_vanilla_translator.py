@@ -1,313 +1,288 @@
 #!/usr/bin/env python3
 """
-Pure LLM jQuery to JavaScript Translator
-Uses only GPT-2 Medium for translation without RAG, patterns, or Semgrep
-llm_vanilla_translator.py
+Pure LLM jQuery→JS Translator (Qwen2.5-Coder-1.5B-Instruct)
+CPU-optimized build: shorter context, fewer tokens, KV cache ON, chat-template fallback.
 """
 
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+import os
+# Force CPU (avoid MPS/Metal crashes)
+os.environ["PYTORCH_MPS_DISABLE"] = "1"
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import re
 from typing import List, Dict
 import warnings
-
 warnings.filterwarnings("ignore")
 
+
+# Fallback ChatML template for Qwen-style chat models
+QWEN_CHATML_TEMPLATE = """{% if system_message %}<|im_start|>system
+{{ system_message }}
+<|im_end|>
+{% endif %}{% for message in messages %}<|im_start|>{{ message['role'] }}
+{{ message['content'] }}
+<|im_end|>
+{% endfor %}<|im_start|>assistant
+"""
+
+
+def _few_shot_prefix() -> str:
+    return (
+        "Convert jQuery to vanilla JavaScript. Output ONLY the JavaScript code, "
+        "no explanations, no labels like 'JavaScript:', and no backticks.\n\n"
+        "Examples:\n"
+        "jQuery: $('#button').click(function(){ alert('hi'); });\n"
+        "JavaScript: document.getElementById('button').addEventListener('click', function(){ alert('hi'); });\n\n"
+        "jQuery: $(document).ready(function(){ init(); });\n"
+        "JavaScript: document.addEventListener('DOMContentLoaded', function(){ init(); });\n\n"
+    )
+
+
 class LLMVanillaTranslator:
-    """Pure LLM-based jQuery to JavaScript translator using GPT-2 Medium"""
-    
-    def __init__(self, model_name: str = "gpt2-medium"):
-        """Initialize translator with GPT-2 model only"""
+    """Pure LLM-based translator using Qwen2.5-Coder-1.5B-Instruct (CPU-optimized)."""
+
+    def __init__(self, model_name: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct"):
         self.model_name = model_name
-        
-        print(f"Loading Pure LLM jQuery to JS Translator")
+        print("Loading Pure LLM jQuery→JS Translator")
         print(f"   Model: {model_name}")
-        print(f"   Mode: Pure Generative AI (No RAG/Patterns/Security)")
-        
-        # Load LLM model
+        print("   Mode: Pure Generative AI (No RAG/Patterns/Security)")
+
+        # CPU device & threads
+        self.device = "cpu"
         try:
-            self.tokenizer = GPT2Tokenizer.from_pretrained(self.model_name)
-            self.model = GPT2LMHeadModel.from_pretrained(self.model_name)
-            
-            # Fix padding token issue - add a new pad token
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-                self.model.resize_token_embeddings(len(self.tokenizer))
-            
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.model.to(self.device)
-                
-            print(f" {self.model_name} loaded on {self.device}")
-            
-        except Exception as e:
-            print(f" Error loading model: {e}")
-            raise
-    
+            torch.set_num_threads(max(1, os.cpu_count() or 1))
+        except Exception:
+            pass
+
+        # Load tokenizer/model on CPU (float32)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+        ).to(self.device).eval()
+
+        # Ensure pad token exists (Qwen often uses EOS as pad)
+        if self.tokenizer.pad_token is None and self.tokenizer.eos_token is not None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Tighter limits for speed on CPU
+        self.max_input_tokens = 384   # was 512
+        self.max_new_tokens  = 40     # was 96 (one-liners don't need more)
+
+        # KV cache ON -> big speedup on CPU
+        if hasattr(self.model, "config"):
+            self.model.config.use_cache = True
+
+        print(f" {model_name} loaded on CPU")
+
+    # ---------- Prompting ----------
+
     def create_translation_prompt(self, jquery_code: str) -> str:
-        """Create optimized prompt for LLM translation"""
-        prompt = f"""
-Convert jQuery to vanilla JavaScript:
+        return (_few_shot_prefix() + f"jQuery: {jquery_code}\nJavaScript:").strip()
 
-Examples:
-jQuery: $('#button').click(function() {{ alert('hello'); }});
-JavaScript: document.getElementById('button').addEventListener('click', function() {{ alert('hello'); }});
+    def _build_chat(self, prompt: str) -> str:
+        system = "You are a concise coding assistant. Output ONLY JavaScript; no prose, no backticks, no labels."
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        # Try official templating; provide fallback if absent
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            try:
+                return self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    chat_template=getattr(self.tokenizer, "chat_template", None) or QWEN_CHATML_TEMPLATE,
+                )
+            except Exception:
+                pass
+        # Manual ChatML
+        return "".join(
+            f"<|im_start|>{m['role']}\n{m['content']}\n<|im_end|>\n" for m in messages
+        ) + "<|im_start|>assistant\n"
 
-jQuery: $('.items').hide();
-JavaScript: document.querySelectorAll('.items').forEach(el => el.style.display = 'none');
+    # ---------- Generation ----------
 
-jQuery: $('#element').addClass('active');
-JavaScript: document.getElementById('element').classList.add('active');
-
-jQuery: $(document).ready(function() {{ init(); }});
-JavaScript: document.addEventListener('DOMContentLoaded', function() {{ init(); }});
-
-Convert this jQuery code to vanilla JavaScript:
-jQuery: {jquery_code}
-JavaScript:"""
-        
-        return prompt
-    
-    def generate_with_llm(self, prompt: str, max_length: int = 150) -> str:
-        """Generate vanilla JavaScript using GPT-2"""
+    def generate_with_llm(self, prompt: str) -> str:
         try:
-            # Encode the prompt with proper attention mask
-            encoded = self.tokenizer(
-                prompt, 
-                return_tensors="pt", 
-                padding=True, 
-                truncation=True, 
-                max_length=512
+            chat_prompt = self._build_chat(prompt)
+            enc = self.tokenizer(
+                chat_prompt,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.max_input_tokens,
             )
-            
-            inputs = encoded['input_ids'].to(self.device)
-            attention_mask = encoded['attention_mask'].to(self.device)
-            
-            # Generate response with proper parameters
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs,
-                    attention_mask=attention_mask,
-                    max_length=inputs.shape[1] + max_length,
-                    num_return_sequences=1,
-                    temperature=0.7,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
+            input_ids = enc["input_ids"].to(self.device)
+            attn = enc.get("attention_mask")
+            if attn is not None:
+                attn = attn.to(self.device)
+
+            print(f"   [tokens in] {input_ids.shape[1]}  |  [max new] {self.max_new_tokens}")
+
+            with torch.inference_mode():
+                out = self.model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attn,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,      # deterministic
+                    temperature=None,
+                    top_p=None,
+                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
                     eos_token_id=self.tokenizer.eos_token_id,
                     no_repeat_ngram_size=2,
-                    repetition_penalty=1.1
+                    repetition_penalty=1.05,
+                    use_cache=True,       # speed
                 )
-            
-            # Decode response
-            generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Extract only the generated part (after the prompt)
-            generated_part = generated_text[len(prompt):].strip()
-            
-            return generated_part
-            
+
+            gen_ids = out[0][input_ids.shape[1]:]
+            text = self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+            return text or "// Unable to generate translation"
+
         except Exception as e:
-            print(f"⚠️ Generation error: {str(e)}")
-            return f"// Error generating translation: {str(e)}"
-    
+            print(f"⚠ Generation error: {e}")
+            return f"// Error generating translation: {e}"
+
+    # ---------- Cleaning ----------
+
     def clean_generated_code(self, generated_code: str) -> str:
-        """Clean and format the generated JavaScript code"""
-        # Remove extra whitespace and newlines
-        cleaned = re.sub(r'\n\s*\n', '\n', generated_code.strip())
-        
-        # Remove any incomplete sentences or trailing text after semicolon
-        lines = cleaned.split('\n')
+        text = generated_code.strip()
+
+        m = re.search(r"```(?:js|javascript)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+        if m:
+            text = m.group(1).strip()
+
+        lines = [ln.strip() for ln in text.splitlines()]
+        filtered = []
+        for ln in lines:
+            if ln.lower() in {"javascript:", "answer:", "output:", "solution:", "code:"}:
+                continue
+            if ln.startswith("```"):
+                continue
+            filtered.append(ln)
+        text = "\n".join(filtered).strip()
+
         code_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if line:
-                # Stop at first line that doesn't look like code
-                if (line.startswith('//') or 
-                    'document.' in line or 
-                    line.endswith(';') or 
-                    line.endswith('{') or 
-                    line.endswith('}') or
-                    'function' in line or
-                    'addEventListener' in line):
-                    code_lines.append(line)
-                else:
-                    # Stop processing if we hit non-code text
-                    break
-        
-        # Join the cleaned lines
-        result = '\n'.join(code_lines)
-        
-        # Ensure proper semicolon ending for single statements
-        if result and not result.rstrip().endswith((';', '}', '{')):
-            result = result.rstrip() + ';'
-        
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if (
+                s.startswith("//")
+                or s.endswith((";", "{", "}"))
+                or any(k in s for k in [
+                    "document.", "getElementById(", "querySelector(", "querySelectorAll(",
+                    "addEventListener(", "function(", "const ", "let ", "var "
+                ])
+            ):
+                code_lines.append(s)
+
+        if code_lines:
+            result = "\n".join(code_lines)
+        else:
+            m2 = re.search(r"(document\.[^\n;]+;)", text)
+            result = m2.group(1) if m2 else ""
+
+        result = result.replace("console log", "console.log").strip()
+        if result and not result.rstrip().endswith((";", "}", "{")):
+            result = result.rstrip() + ";"
+
         return result if result else "// Unable to generate clean translation"
-    
+
+    # ---------- Public API ----------
+
     def translate(self, jquery_code: str) -> Dict:
-        """Main translation method using pure LLM approach"""
         jquery_code = jquery_code.strip()
-        
         if not jquery_code:
-            return {
-                "original": jquery_code,
-                "translated": "// Empty input",
-                "method": "none",
-                "model": self.model_name
-            }
-        
+            return {"original": jquery_code, "translated": "// Empty input", "method": "none", "model": self.model_name}
+
         print(f"\n🔄 LLM Translating: {jquery_code}")
-        
-        try:
-            # Create translation prompt
-            prompt = self.create_translation_prompt(jquery_code)
-            
-            # Generate translation using LLM
-            generated_code = self.generate_with_llm(prompt)
-            
-            # Clean the generated code
-            cleaned_code = self.clean_generated_code(generated_code)
-            
-            print(f"LLM translation successful")
-            print(f"   Result: {cleaned_code}")
-            
-            return {
-                "original": jquery_code,
-                "translated": cleaned_code,
-                "method": "llm_generation",
-                "model": self.model_name,
-                "raw_generation": generated_code  # Keep raw for debugging
-            }
-            
-        except Exception as e:
-            print(f" LLM translation failed: {str(e)}")
-            return {
-                "original": jquery_code,
-                "translated": f"// LLM Error: {str(e)}",
-                "method": "error",
-                "model": self.model_name,
-                "error": str(e)
-            }
-    
+        prompt = self.create_translation_prompt(jquery_code)
+        raw = self.generate_with_llm(prompt)
+        cleaned = self.clean_generated_code(raw)
+        print("LLM translation successful")
+        print(f"   Result: {cleaned}")
+        return {
+            "original": jquery_code,
+            "translated": cleaned,
+            "method": "llm_generation",
+            "model": self.model_name,
+            "raw_generation": raw,
+        }
+
     def batch_translate(self, jquery_codes: List[str]) -> List[Dict]:
-        """Batch translation using pure LLM approach"""
-        results = []
-        
         print(f"\n LLM Batch Translation ({len(jquery_codes)} items)")
         print("=" * 60)
-        
-        for i, code in enumerate(jquery_codes, 1):
-            print(f"\n[{i}/{len(jquery_codes)}]", end=" ")
-            result = self.translate(code)
-            results.append(result)
-        
-        return results
-    
+        return [self.translate(code) for code in jquery_codes]
+
     def translation_report(self, results: List[Dict]):
-        """Generate translation report from LLM results"""
-        print(f"\n📊 LLM TRANSLATION REPORT")
+        print("\n📊 LLM TRANSLATION REPORT")
         print("=" * 40)
-        
-        # Count by success/failure
-        successful = sum(1 for r in results if r['method'] == 'llm_generation')
-        failed = sum(1 for r in results if r['method'] == 'error')
-        empty = sum(1 for r in results if r['method'] == 'none')
-        
+        successful = sum(1 for r in results if r["method"] == "llm_generation")
+        failed = sum(1 for r in results if r["method"] == "error")
+        empty = sum(1 for r in results if r["method"] == "none")
+        total = max(1, len(results))
         print(f" Successful: {successful}")
         print(f" Failed: {failed}")
         print(f" Empty: {empty}")
-        print(f" Success Rate: {successful/len(results)*100:.1f}%")
+        print(f" Success Rate: {successful/total*100:.1f}%")
         print(f" Model Used: {self.model_name}")
-    
+
     def compare_translations(self, jquery_code: str, num_variations: int = 3) -> List[Dict]:
-        """Generate multiple translations for comparison (demonstrating AI creativity)"""
         print(f"\n Generating {num_variations} creative variations for: {jquery_code}")
-        
-        variations = []
-        for i in range(num_variations):
-            print(f"   Variation {i+1}/{num_variations}...")
-            result = self.translate(jquery_code)
-            result['variation_id'] = i + 1
-            variations.append(result)
-        
-        return variations
-    
+        return [dict(self.translate(jquery_code), variation_id=i + 1) for i in range(num_variations)]
+
     def analyze_creativity(self, variations: List[Dict]) -> Dict:
-        """Analyze creativity and diversity in LLM translations"""
         if not variations:
             return {"diversity_score": 0, "unique_approaches": 0}
-        
-        # Get unique translations
-        translations = [v['translated'] for v in variations if v['method'] == 'llm_generation']
-        unique_translations = list(set(translations))
-        
-        diversity_score = len(unique_translations) / len(translations) * 100 if translations else 0
-        
-        print(f"\n CREATIVITY ANALYSIS")
+        translations = [v["translated"] for v in variations if v["method"] == "llm_generation"]
+        uniq = list(set(translations))
+        score = (len(uniq) / len(translations) * 100) if translations else 0
+        print("\n CREATIVITY ANALYSIS")
         print("=" * 30)
         print(f" Total Variations: {len(variations)}")
-        print(f" Unique Solutions: {len(unique_translations)}")
-        print(f"Diversity Score: {diversity_score:.1f}%")
-        
-        return {
-            "total_variations": len(variations),
-            "unique_solutions": len(unique_translations),
-            "diversity_score": diversity_score,
-            "translations": unique_translations
-        }
+        print(f" Unique Solutions: {len(uniq)}")
+        print(f" Diversity Score: {score:.1f}%")
+        return {"total_variations": len(variations), "unique_solutions": len(uniq), "diversity_score": score, "translations": uniq}
+
 
 def main():
-    """Test the pure LLM translator"""
-    # Initialize translator
-    translator = LLMVanillaTranslator(model_name="gpt2-medium")
-    
-    # Test cases
-    test_cases = [
-        # Basic cases
+    t = LLMVanillaTranslator("Qwen/Qwen2.5-Coder-1.5B-Instruct")
+    cases = [
         "$('#button').click(function() { console.log('clicked'); });",
         "$('.items').hide();",
-        "$('#element').addClass('active');", 
+        "$('#element').addClass('active');",
         "$('#text').text('Hello World');",
         "$('#element').css('color', 'red');",
         "$(document).ready(function() { init(); });",
-        
-        # More complex cases
         "$('.items').each(function(i, el) { $(el).addClass('item-' + i); });",
         "$('#form').submit(function(e) { e.preventDefault(); });",
     ]
-    
-    print(f"\n Testing Pure LLM jQuery to JavaScript Translator")
+    print("\n Testing Pure LLM jQuery→JS Translator (Qwen2.5-Coder, CPU-optimized)")
     print("=" * 60)
-    
-    # Translate all test cases
-    results = translator.batch_translate(test_cases)
-    
-    # Generate translation report
-    translator.translation_report(results)
-    
-    # Detailed results
-    print(f"\n DETAILED RESULTS")
+    results = t.batch_translate(cases)
+    t.translation_report(results)
+
+    print("\n DETAILED RESULTS")
     print("=" * 40)
-    
-    for i, result in enumerate(results, 1):
-        print(f"\n{i}. {result['original']}")
-        print(f"   → {result['translated']}")
-        print(f"   Method: {result['method']}")
-        
-        if result['method'] == 'error':
-            print(f"   Error: {result.get('error', 'Unknown')}")
-    
-    # Demonstrate creativity analysis
-    print(f"\n CREATIVITY DEMONSTRATION")
+    for i, r in enumerate(results, 1):
+        print(f"\n{i}. {r['original']}\n   → {r['translated']}\n   Method: {r['method']}")
+        if r["method"] == "error":
+            print(f"   Error: {r.get('error','Unknown')}")
+
+    print("\n CREATIVITY DEMONSTRATION")
     print("=" * 40)
-    
-    # Test creativity on a complex example
     creative_test = "$('#items').each(function() { $(this).fadeIn(); });"
-    variations = translator.compare_translations(creative_test, num_variations=3)
-    creativity_analysis = translator.analyze_creativity(variations)
-    
-    print(f"\nVariations generated:")
-    for i, var in enumerate(variations, 1):
-        print(f"{i}. {var['translated']}")
+    variations = t.compare_translations(creative_test, num_variations=3)
+    _ = t.analyze_creativity(variations)
+    print("\nVariations generated:")
+    for i, v in enumerate(variations, 1):
+        print(f"{i}. {v['translated']}")
+
 
 if __name__ == "__main__":
     main()
